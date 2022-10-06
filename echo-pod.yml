@@ -1,7 +1,25 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: app-echo
+  name: app-echo-with-labels
+  labels:
+    environment: dev
+    app: web-server
+spec:
+  containers:
+  - name: app-echo-container
+    image: fofonovrv/echoserver:alpine
+    ports:
+    - containerPort: 8000
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-echo-with-labels02
+  labels:
+    environment: ops
+    app: http-server
 spec:
   containers:
   - name: app-echo-container

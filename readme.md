@@ -76,8 +76,6 @@ kubectl get nodes
 
 # информация о подах, включая системные
 kubectl get nodes --all-namespaces
-
-
 ```
 
 ## Создание кластера на AWS
@@ -218,11 +216,18 @@ subjects:
 ```
 kubectl apply -f sa-dash.yml
 ```
-Получим токен созданного сервис аккаунта:
+Создадим токен созданного сервис аккаунта:
 
 ```
 kubectl -n kubernetes-dashboard create token admin-user
 ```
+
+В будущем, созданный ранее токен можно получить так:
+
+```
+kubectl -n kubernetes-dashboard describe secret $(kubectl -n kubernetes-dashboard get secret | grep admin-user | awk '{print $1}')
+```
+
 Создаем прокси:
 
 ```
@@ -238,12 +243,29 @@ kubectl proxy
 ```
 kubectl run app-echoserver --image=fofonovrv/echoserver:alpine --port=8000
 
+# или 
+kubectl create -f new-pod.yml
+# или 
+kubectl apply -f new-pod.yml
+
+```
+
+Удаление пода:
+
+```
+kubectl delete pod <name>
 ```
 Подробная информация о поде:
 Здесь содержится инфа о лейблах, адресе, образах, статсе, контейнерах, нода, на которых запущен, а также, логи.
 
 ```
-kubectl describe pod <pod_name>
+kubectl describe pods <pod_name>
+
+# или 
+kubectl delete -f new-pod.yml
+
+# или на основе селектора меток
+kubectl delete pods -l app=web-server
 ```
 
 Подключиться к поду в контейнере:
@@ -268,3 +290,209 @@ kubectl port-forward <pod_name>  11111:8000
 ```
 kubectl logs <pod_name> --container <container_name>
 ```
+
+## Лейблы (метки)
+
+#### Лейбл это ключ=значение
+
+Можно добавлять к новым или уже запущенным объектам.
+
+Добавм лейблы к метадате объекта перед созданием:
+
+```
+metadata:
+  name: app-echo-with-labels
+  labels:
+    environment: dev
+	app: http-server
+	
+```
+Вывести поды вместе с леблами:
+
+```
+kubectl get pods --show-labels
+```
+
+При создании пода командой kubectl run автоматически навешивается лейбл <b>run=pod_name</b>
+
+Вывести поды с определенными лейблами:
+
+```
+kubectl get pods -L app,run
+```
+
+Можно выбирать поды с определенными значениями лейблов
+
+Селекторы меток на основе сравнения поддерживают три оператора: <b>=</b>, <b>==</b>, <b>!=</b>	. Первые два - синонимы
+
+```
+kubectl get pods -l app=http-server
+```
+
+Селекторы меток на основе набора: in, notin, пример:
+
+```
+kubectl get pods -l 'app in (http-server,web-server)'
+```
+
+Если нужно при деплое пода выбрать только те ноды, где есть GPU, можем воспользоваться меткой. Поставим на ноде лейбл <b>gpu=true</b>
+
+манифест для пода в этом случае должен содержать соответствующий nodeSelector:
+
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-gpu-server
+  labels:
+    app: gpu-server
+spec:
+  nodeSelector:
+    gpu: "true"
+  containers:
+  - name: app-echo-container
+    image: fofonovrv/echoserver:alpine
+    ports:
+    - containerPort: 8000
+```
+
+### Аннотации
+
+Похожи на лейблы, но без селеторов. Используются для добавления описания. Можно увидеть в pod describe
+
+Добавить аннотацию к работающему поду:
+
+```
+kubectl annotate pod app-01 creator_email='ilon_mask@gmail.com'
+```
+
+## Пространства имен (ns)
+
+Вывести список неймспейсов:
+```
+kubectl get ns
+```
+
+Манифест для создания ns:
+
+```
+apiVersion: v1
+kind: Namespace
+metadata:
+    name: dev
+```
+
+Создание командой:
+
+```
+kubectl create namespace dev
+```
+
+При создании пода можно указать неймспейс в метадате:
+
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-01
+  namespace: dev
+```
+
+Информация о всех подах во всей неймспейсах:
+
+```
+kubectl get pods --all-namespaces
+```
+
+При удалении неймспейса, его поды так же удаляются:
+
+```
+kubectl delete ns dev
+```
+
+## ReplicationController (rc)
+
+ReplicationController постоянно следить, что все необходимые поды запущены. Если какая то нода падает, то ReplicationController перезапускает поды на другой ноде.
+
+Создание ReplicationController с тремя репликами пода, выбранного селектором лейбла:
+
+```
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: kuber-rc
+spec:
+  replicas: 3
+  selector:
+    app: web-server
+  template:
+    metadata:
+      name: web-echo
+      labels:
+        app: web-server
+    spec:
+      containers:
+      - name: web-echo-image
+        image: fofonovrv/echoserver:alpine
+        ports:
+        - containerPort: 8000
+```
+
+При применении измененного манифеста rc, будут созданы новые реплики, а старые перестанут контролироваться
+
+Изменения можно вносить прямо через дашборд. Но если изменить контейнер, то необходимо удалять старые поды, чтобы rc развернул новые с новым контейнером
+
+Операции с ReplicationController:
+
+```
+# посмотреть
+kubectl get rc
+
+# удалить
+kubectl delete rc
+```
+
+## ReplicaSet (rs)
+
+Является новым поколением, заменяющим ReplicationController.
+
+Обчыно, создается автоматически при создании ресурса более высокого уровня - Deployment
+
+Манифест для создания rs:
+
+```
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: kuber-rs-1
+  labels:
+    app: kuber-rs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      env: dev
+  template:
+    metadata:
+      labels:
+        env: dev
+    spec:
+      containers:
+      - name: web-echo-image
+        image: fofonovrv/echoserver:alpine
+```
+
+В селекторе вместо matchLabels использовать matchExpressions, в котором можно использовать четыре оператора: In, NotIn, Exists, DoesNotExist:
+
+```
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - kuber
+          - http-server
+      - key: env
+```
+
+## 

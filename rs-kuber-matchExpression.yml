@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: kuber-rs-2
+  labels:
+    app: kuber-rs
+spec:
+  replicas: 3
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - kuber
+          - http-server
+      - key: env
+        operator: Exists
+  template:
+    metadata:
+      labels:
+        env: dev
+        app: kuber
+    spec:
+      containers:
+      - name: web-echo-image
+        image: fofonovrv/echoserver:alpine
