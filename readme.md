@@ -495,4 +495,241 @@ spec:
       - key: env
 ```
 
-## 
+## Deployment (развёртывания)
+
+Деплойменты служат для развертывания и обновления приложения с нулевым простоем.
+
+Создать деплоймент командой:
+
+```
+kubectl create deployment kube-ctl-app --image=fofonovrv/echoserver:alpine --port=8000 --replicas=3
+```
+
+Если мы обновили образ, то можно командой заменить образ в деплоймент:
+
+```
+kubectl set image deployment/kuber-ctl-app echoserver=fofonovrv/echoserver:1.1 --record
+```
+
+<b>--record</b> необходимо для записи истории ревизий, однако этот флаг устарел, лучше сразу запускать с этим флагом apply
+
+После этой команды, деплоймент создаст новый RS, с контейнерами новой версии, развернет их, а затем, изменит желаемое количесво реплик в старом RS на 0 (и удалит старые поды).
+
+### Манифест создание деплоймента
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kuber
+  labels:
+    app: kuber
+spec:
+  replicas: 5
+  minReadySeconds: 10
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: http-server
+  template:
+    metadata:
+      labels:
+        app: http-server
+    spec:
+      containers:
+        - name: app-echoserver1-0
+          image: fofonovrv/echoserver:1.0
+          ports:
+          - containerPort: 8000
+
+```
+
+Новое в манифесте
+
++ <b>strategy</b> - стратегия обновления: RollingUpdate или Recreate
++ <b>RollingUpdate</b> - обновлять поды постепенно, исходя из параметров maxSurge и maxUnavailable
++ <b>Recreate</b> - удалить все поды, затем создать заново
++ <b>maxSurge</b> - максимальный всплеск / сколько подов будут добавляться единовременно
++ <b>maxUnavailable</b> - максимальное количество недоступных подов / по сколько подов будут убиваться
++ <b>minReadySeconds</b> - количество секунд для нового пода, после чего он считается доступным
+
+### История обновления и откат
+
+Посмотреть историю ревизий (попадают только --record)
+
+```
+kubectl rollout history deployment <deployment_name>
+```
+
+Откатить версию назад:
+
+```
+kubectl rollout undo deployment kuber
+```
+
+Откатиться к определенной версс ревизии (номер в history)
+
+```
+kubectl rollout undo deployment kuber --to-revision=1
+```
+
+Откат происходит на основании RS, каждая ревизии сответствует определенному RS. Поэтому их не стоит удалять
+
+## Сервисы
+
+Сервис - объект для предоставления единой точки входа к группе подов одного приложения
+
+Есть 4 типа сервисов k8s:
++ <b>ClusterIP (default)</b> - для обращения внутри кластера, проксирует каждый отдельный запрос к рандомному поду
++ <b>NodePort</b> - робрасывает снаружи в кластер, открывает указанный порт на каждой ноде кластера. Проксирует на рандомный под.
++ <b>LoadBalancer</b> - только на cloud провайдере. 
++ <b>ExternalName</b> - реализется на уровне DNS, создает указанный cname, подключаться по нему можно напрямую, минуя прокси. (не подходит для https (TLS), т.к. в заголовке не оригинальное имя сервера)
+
+### Манифест создания сервиса ClusterIP
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+spec:
+  selector:
+    app: http-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP
+```
+
+Если после создания сервиса пересоздать поды, то мы увидим в них переменные окружения, образованные от нашего названия "my-service" и с нашими параметрами.
+По этим переменным можно обращаться к сервису из любого пода. Поэтому желательно сначала создавать сервис, а затем поды, чтобы в каждый под переменные окружения были добавлены сразу
+
+```
+MY_SERVICE_PORT_80_TCP=tcp://10.107.114.235:80
+MY_SERVICE_SERVICE_HOST=10.107.114.235
+MY_SERVICE_SERVICE_PORT=80
+MY_SERVICE_PORT=tcp://10.107.114.235:80
+MY_SERVICE_PORT_80_TCP_ADDR=10.107.114.235
+MY_SERVICE_PORT_80_TCP_PORT=80
+MY_SERVICE_PORT_80_TCP_PROTO=tcp
+```
+
+Можно обращаться к службам из подов по имени сервиса в формате:
+
+```
+http://my-service.default.svc.cluster.local
+
+# http://<service_name>.<namespace>.svc.cluster.local
+
+# в пределах одного немспейса можно:
+# http://<service_name>
+```
+
+### Headless сервисы
+
+Такой сервис позволит не использовать прокси, а резолвится во все адреса подов одновременно.
+
+Для создания Headless в манифесте укажем <b>clusterIP: None</b>
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: headless-service
+spec:
+  clusterIP: None
+  selector:
+    app: http-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP
+```
+
+Имя такой службы внутри кластера резолвится всеми адресами подов:
+
+```
+/ # nslookup headless-service
+Server:         10.96.0.10
+Address:        10.96.0.10#53
+
+Name:   headless-service.default.svc.cluster.local
+Address: 172.17.0.13
+Name:   headless-service.default.svc.cluster.local
+Address: 172.17.0.6
+Name:   headless-service.default.svc.cluster.local
+Address: 172.17.0.10
+Name:   headless-service.default.svc.cluster.local
+Address: 172.17.0.12
+Name:   headless-service.default.svc.cluster.local
+Address: 172.17.0.11
+```
+
+Если делать curl службы:порт, будем попадать на рандомный адрес.
+Может потребоваться в приложении, которое будет резолвить имя службы, брать адреса и подключаться сразу ко всем.
+
+### Сервис ExternalName
+
+Просто создает DNS CNAME
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-service
+spec:
+  type: ExternalName
+  externalName: database01
+```
+
+### Сервис NodePort
+
+Пробрасывает снаружи в кластер, открывает указанный порт на каждой ноде кластера. Если создавать в облаке, сразу будет external ip. Проксирует на рандомный под.
+
+nodePort: 30000  - задавать не обязательно, кубер выберет любой свободный в диапазоне 30000-32767
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-service
+spec:
+  # externalTrafficPolicy: Local
+  # sessionAffinity: ClientIP
+  selector:
+    app: http-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+      nodePort: 30000   #port range 30000-32767
+  type: NodePort
+```
+
+Чтобы подключиться к сервису на миникубе:
+
+```
+# узнаем ip кластера:
+minikube ip
+
+# curl <minicube_ip>:<nodeport>
+```
+
+<b>sessionAffinity: ClientIP</b> - перенаправлять каждого клиента только к одному поду (рандомно первый раз, потом запоминает под и клиента)
+
+### Сервис LoadBalancer
+
+Улучшеная версия NodePort. Проксирует не сама служба, а балансировщик нагрузки на стороне cloud провайдера
+
+Чтобы распределить трафик в равной степени по нодам, а дальше использовать внутренний балансировщик:
+
+```
+spec:
+  externalTrafficPolicy: Local
+```

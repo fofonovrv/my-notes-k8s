@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-service
+spec:
+  # externalTrafficPolicy: Local
+  # sessionAffinity: ClientIP
+  selector:
+    app: http-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+      nodePort: 30000   #port range 30000-32767
+  type: NodePort

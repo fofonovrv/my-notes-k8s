@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: kubia-rc
+spec:
+  replicas: 3
+  selector:
+    app: web-server
+  template:
+    metadata:
+      name: http-nodejs
+      labels:
+        app: web-server
+    spec:
+      containers:
+      - name: http-nodejs
+        image: luksa/kubia
+        ports:
+        - containerPort: 8080
